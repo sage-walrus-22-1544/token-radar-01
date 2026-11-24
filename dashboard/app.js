@@ -1,4 +1,4 @@
-// Token Radar dashboard (model radar-3). Reads window.RADAR, written beside
+// Token Radar dashboard (model radar-4). Reads window.RADAR, written beside
 // dashboard/ by main.ts from the same board board.json carries - the farm
 // plans shown here are the board's own farm_steps, not a second derivation.
 // No network: every byte it renders is in data.js.
@@ -154,7 +154,7 @@
         onclick: function () { openDetail(r.slug); },
         onkeydown: function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(r.slug); } }
       },
-        el('td', { class: 'num', text: String(r.rank) }),
+        el('td', { class: 'num' }, el('span', { class: 'rankno' + (r.rank <= 3 ? ' top' : ''), text: String(r.rank) })),
         el('td', null, nameCell),
         el('td', { class: 'num', text: fmtUsd(r.tvl_usd) }),
         el('td', { class: 'num ' + (r.change_7d === null ? '' : r.change_7d >= 0 ? 'pos' : 'neg'), text: fmtPct(r.change_7d) }),
@@ -237,14 +237,21 @@
         line('7-day change', fmtPct(row.change_7d)),
         line('Momentum multiplier', 'x' + row.momentum_multiplier.toFixed(4)),
         line('Age recording no token', fmtAge(row.age_days)),
+        line('First tracked by DefiLlama', row.listed_at || 'not reported'),
         line('Maturity multiplier', 'x' + row.maturity_multiplier.toFixed(4)),
         line('Breadth multiplier', 'x' + row.breadth_multiplier.toFixed(4)),
         line('Launch plausibility', 'x' + row.plausibility_factor.toFixed(2)),
         el('div', { class: 'total' }, el('span', { text: 'Implied value' }), el('b', { text: fmtUsd(row.implied_value_usd) }))),
       row.plausibility_reason ? el('p', { class: 'sub', text: 'Why the plausibility factor applies: ' + row.plausibility_reason + '. The protocol stays on the board for coverage; the factor keeps a product whose value already trades from outranking protocols still waiting on a launch of their own.' }) : null,
       el('p', { class: 'sub', text: 'Model ' + DATA.model_version + ': the same function scores every protocol on the board; no name is special-cased. An estimate, not a price.' })));
+    var fs = row.farm_summary;
     dialog.appendChild(el('section', { class: 'detail-section' },
       el('h3', { text: 'Farm plan' }),
+      fs ? el('div', { class: 'plan-glance' },
+        el('div', null, el('span', { text: 'Capital in the position' }), el('b', { text: fmtUsd(fs.capital_usd) })),
+        el('div', null, el('span', { text: 'Fees over the ' + fs.hold_days + '-day window' }), el('b', { text: 'about ' + fmtUsd(fs.fees_usd) })),
+        el('div', null, el('span', { text: 'Time to set up' }), el('b', { text: fs.setup_minutes + ' minutes' })),
+        el('div', null, el('span', { text: 'Time each week' }), el('b', { text: fs.weekly_minutes + ' minutes' }))) : null,
       el('ol', { class: 'steps' }, row.farm_steps.map(function (s) { return el('li', { text: s }); }))));
     if (!dialog.isConnected) app.appendChild(dialog);
     if (typeof dialog.showModal === 'function') { if (!dialog.open) dialog.showModal(); }
