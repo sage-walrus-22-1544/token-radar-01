@@ -13,7 +13,7 @@ reads the sealed DefiLlama snapshot (`/input/snapshot.json`), ranks **every**
 protocol that records no token (CoinGecko id and symbol both null) by an
 implied launch value, and writes a static dashboard a reader can use.
 
-## The value model (radar-3)
+## The value model (radar-4)
 
 Every figure is computed from the snapshot at run time; no protocol is
 hand-valued.
@@ -46,7 +46,9 @@ hand-valued.
 Each board row also carries a five-step farm plan generated from the
 protocol's own category, working chain, TVL tier and age — the action the
 category implies, a capital tier, a weekly cadence, a holding window, and
-claim hygiene. The working chain is the first listed chain that is not
+claim hygiene. Every step states its cost and its time, and each row adds
+up the plan's totals (capital, fees across the holding window, minutes a
+week) in a `farm_summary` the dashboard shows as the plan at a glance. The working chain is the first listed chain that is not
 Bitcoin (DefiLlama lists Bitcoin first for many bridges and exchanges,
 and USDC cannot move on Bitcoin); a protocol listed only on Bitcoin gets
 steps phrased as holding or bridging BTC from a Bitcoin wallet instead.
