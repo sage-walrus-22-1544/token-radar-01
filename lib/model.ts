@@ -1,4 +1,6 @@
-// Token Radar model v3: one sealed snapshot in, one ranked board out.
+// Token Radar model v4: one sealed snapshot in, one ranked board out.
+// (v4 adds a computed plan summary - capital, fees over the holding
+// window, minutes a week - to every row's farm plan; values unchanged.)
 //
 // The board ranks EVERY protocol in the snapshot that records no token
 // (gecko_id and symbol both null) - the watchlist's 40 large protocols and
@@ -65,7 +67,7 @@ export interface Snapshot {
   watchlist: string[];
 }
 
-export const MODEL_VERSION = 'radar-3';
+export const MODEL_VERSION = 'radar-4';
 
 /** Categories need at least this many tokenized peers before their own median is trusted. */
 export const MIN_PEERS = 3;
@@ -109,6 +111,15 @@ export interface PeerStats {
   by_category: Record<string, { peers: number; ratio: number }>;
 }
 
+/** A farm plan's totals, added up from the same figures its steps state. */
+export interface FarmSummary {
+  capital_usd: number;
+  fees_usd: number;
+  setup_minutes: number;
+  weekly_minutes: number;
+  hold_days: number;
+}
+
 /** One row of board.json. */
 export interface BoardRow {
   rank: number;
@@ -137,6 +148,7 @@ export interface BoardRow {
     plausibility_reason: string | null;
   };
   farm_steps: string[];
+  farm_summary: FarmSummary;
 }
 
 /** A live-token protocol: already trades, shown with the market's own value, never ranked. */
@@ -172,6 +184,7 @@ export interface RadarRow {
   plausibility_factor: number;
   plausibility_reason: string | null;
   farm_steps: string[];
+  farm_summary: FarmSummary;
 }
 
 /** Everything the dashboard renders. */
@@ -412,6 +425,27 @@ export function farmSteps(p: SnapshotProtocol, age: number | null): string[] {
   return steps.map((s) => (s.length > 600 ? `${s.slice(0, 596)}...` : s));
 }
 
+/**
+ * The plan's totals, from the same figures farmSteps states: the capital
+ * stays in the position; the fees are the funding gas, the setup gas and
+ * $2 a week of repeat gas across the holding window (the Sunday check is
+ * free); the time is 30 minutes to set up, then the 10-minute weekly
+ * action plus the 5-minute check, every week of the window.
+ */
+export function farmSummary(p: SnapshotProtocol, age: number | null): FarmSummary {
+  const capital = capitalFor(p);
+  const hold = holdDaysFor(age);
+  const gas = capital >= 250 ? 10 : capital >= 150 ? 6 : 4;
+  const weeks = Math.ceil(hold / 7);
+  return {
+    capital_usd: capital,
+    fees_usd: gas * 2 + 2 * weeks,
+    setup_minutes: 30,
+    weekly_minutes: 15,
+    hold_days: hold,
+  };
+}
+
 // ---------------------------------------------------------------- the board
 
 /** The ranked board: every protocol that records no token, strongest implied value first. */
@@ -453,6 +487,7 @@ export function buildBoard(snapshot: Snapshot): { board: BoardRow[]; peers: Peer
       plausibility_reason: s.v.plausibility_reason,
     },
     farm_steps: farmSteps(s.p, s.v.age),
+    farm_summary: farmSummary(s.p, s.v.age),
   }));
   return { board, peers };
 }
@@ -510,6 +545,7 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
     plausibility_factor: r.model.plausibility_factor,
     plausibility_reason: r.model.plausibility_reason,
     farm_steps: r.farm_steps,
+    farm_summary: r.farm_summary,
   }));
   // The early radar: below the watchlist floor, ranked by 7-day momentum then TVL.
   const early = rows
