@@ -1,4 +1,4 @@
-// Token Radar dashboard (model radar-4). Reads window.RADAR, written beside
+// Token Radar dashboard (model radar-5). Reads window.RADAR, written beside
 // dashboard/ by main.ts from the same board board.json carries - the farm
 // plans shown here are the board's own farm_steps, not a second derivation.
 // No network: every byte it renders is in data.js.
