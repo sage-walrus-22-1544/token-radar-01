@@ -1,6 +1,8 @@
-// Token Radar model v4: one sealed snapshot in, one ranked board out.
-// (v4 adds a computed plan summary - capital, fees over the holding
-// window, minutes a week - to every row's farm plan; values unchanged.)
+// Token Radar model v5: one sealed snapshot in, one ranked board out.
+// (v5 keeps v4's values and ranking exactly, and rebuilds the farm plans
+// around a per-chain cost table and per-action transaction counts, so a
+// plan's fees and times are arithmetic on the chain it runs on and the
+// action it takes - not one flat gas figure quoted for every protocol.)
 //
 // The board ranks EVERY protocol in the snapshot that records no token
 // (gecko_id and symbol both null) - the watchlist's 40 large protocols and
@@ -67,7 +69,7 @@ export interface Snapshot {
   watchlist: string[];
 }
 
-export const MODEL_VERSION = 'radar-4';
+export const MODEL_VERSION = 'radar-5';
 
 /** Categories need at least this many tokenized peers before their own median is trusted. */
 export const MIN_PEERS = 3;
@@ -357,6 +359,75 @@ function holdDaysFor(age: number | null): number {
   return 30;
 }
 
+// ---------------------------------------------------------------- chain costs
+
+/**
+ * What one transaction costs on a chain, what it costs to fund a fresh
+ * wallet there, and what the wallet must hold for fees. The figures are
+ * the model's stated planning numbers - typical recent mainnet values,
+ * deliberately rounded - and a farm plan's fees are arithmetic on them.
+ * That is the v5 change: a plan on Ethereum and a plan on Base no longer
+ * quote the same gas, because the chains do not charge the same gas.
+ */
+export interface ChainProfile {
+  /** One ordinary contract call or transfer, in USD. */
+  perTxUsd: number;
+  /** Getting funds into a fresh wallet: an exchange withdrawal, typically. */
+  fundUsd: number;
+  /** What the wallet holds for fees, in words. */
+  gasAsset: string;
+  /** Leaving for Ethereum through the canonical bridge waits out a fraud-proof window of about a week. */
+  slowExit: boolean;
+  /** EVM wallets approve a token, then act (two transactions); Solana signs each action once. */
+  family: 'evm' | 'solana' | 'bitcoin' | 'other';
+}
+
+const CHAIN_PROFILES: ReadonlyArray<{ test: RegExp; profile: ChainProfile }> = [
+  { test: /^ethereum(classic|pow)$/i, profile: { perTxUsd: 0.05, fundUsd: 1, gasAsset: "the chain's native token", slowExit: false, family: 'evm' } },
+  { test: /^ethereum$/i, profile: { perTxUsd: 4.5, fundUsd: 5, gasAsset: 'ETH', slowExit: false, family: 'evm' } },
+  { test: /^bitcoin$/i, profile: { perTxUsd: 1.5, fundUsd: 2, gasAsset: 'BTC', slowExit: false, family: 'bitcoin' } },
+  { test: /bitcoincash/i, profile: { perTxUsd: 0.05, fundUsd: 1, gasAsset: 'BCH', slowExit: false, family: 'other' } },
+  { test: /arbitrum/i, profile: { perTxUsd: 0.15, fundUsd: 1, gasAsset: 'ETH', slowExit: true, family: 'evm' } },
+  { test: /optimism|op mainnet/i, profile: { perTxUsd: 0.12, fundUsd: 1, gasAsset: 'ETH', slowExit: true, family: 'evm' } },
+  { test: /^base$/i, profile: { perTxUsd: 0.08, fundUsd: 1, gasAsset: 'ETH', slowExit: true, family: 'evm' } },
+  { test: /world chain|unichain|soneium|^ink$|mode|fraxtal/i, profile: { perTxUsd: 0.05, fundUsd: 1, gasAsset: 'ETH', slowExit: true, family: 'evm' } },
+  { test: /zksync/i, profile: { perTxUsd: 0.25, fundUsd: 1, gasAsset: 'ETH', slowExit: false, family: 'evm' } },
+  { test: /linea/i, profile: { perTxUsd: 0.15, fundUsd: 1, gasAsset: 'ETH', slowExit: false, family: 'evm' } },
+  { test: /scroll/i, profile: { perTxUsd: 0.2, fundUsd: 1, gasAsset: 'ETH', slowExit: false, family: 'evm' } },
+  { test: /taiko/i, profile: { perTxUsd: 0.15, fundUsd: 1, gasAsset: 'ETH', slowExit: false, family: 'evm' } },
+  { test: /mantle/i, profile: { perTxUsd: 0.1, fundUsd: 1, gasAsset: 'MNT', slowExit: true, family: 'evm' } },
+  { test: /blast/i, profile: { perTxUsd: 0.1, fundUsd: 1, gasAsset: 'ETH', slowExit: true, family: 'evm' } },
+  { test: /metis/i, profile: { perTxUsd: 0.1, fundUsd: 1, gasAsset: 'METIS', slowExit: true, family: 'evm' } },
+  { test: /starknet/i, profile: { perTxUsd: 0.1, fundUsd: 1, gasAsset: 'ETH', slowExit: false, family: 'other' } },
+  { test: /solana/i, profile: { perTxUsd: 0.02, fundUsd: 0.5, gasAsset: 'SOL', slowExit: false, family: 'solana' } },
+  { test: /^op_bnb$/i, profile: { perTxUsd: 0.02, fundUsd: 0.6, gasAsset: 'BNB', slowExit: false, family: 'evm' } },
+  { test: /binance|bnb/i, profile: { perTxUsd: 0.25, fundUsd: 0.6, gasAsset: 'BNB', slowExit: false, family: 'evm' } },
+  { test: /polygon/i, profile: { perTxUsd: 0.03, fundUsd: 0.5, gasAsset: 'POL', slowExit: false, family: 'evm' } },
+  { test: /avalanche/i, profile: { perTxUsd: 0.35, fundUsd: 0.8, gasAsset: 'AVAX', slowExit: false, family: 'evm' } },
+  { test: /xdai|gnosis/i, profile: { perTxUsd: 0.01, fundUsd: 0.5, gasAsset: 'xDAI', slowExit: false, family: 'evm' } },
+  { test: /tron/i, profile: { perTxUsd: 1.2, fundUsd: 1, gasAsset: 'TRX', slowExit: false, family: 'other' } },
+  { test: /sui/i, profile: { perTxUsd: 0.01, fundUsd: 0.5, gasAsset: 'SUI', slowExit: false, family: 'other' } },
+  { test: /aptos/i, profile: { perTxUsd: 0.01, fundUsd: 0.5, gasAsset: 'APT', slowExit: false, family: 'other' } },
+  { test: /near/i, profile: { perTxUsd: 0.01, fundUsd: 0.5, gasAsset: 'NEAR', slowExit: false, family: 'other' } },
+  { test: /hyperliquid/i, profile: { perTxUsd: 0.05, fundUsd: 1, gasAsset: 'HYPE', slowExit: false, family: 'other' } },
+  { test: /fantom|sonic/i, profile: { perTxUsd: 0.01, fundUsd: 0.5, gasAsset: "the chain's native token", slowExit: false, family: 'evm' } },
+  { test: /celo/i, profile: { perTxUsd: 0.01, fundUsd: 0.5, gasAsset: 'CELO', slowExit: false, family: 'evm' } },
+  { test: /moonbeam|moonriver/i, profile: { perTxUsd: 0.05, fundUsd: 0.5, gasAsset: "the chain's native token", slowExit: false, family: 'evm' } },
+];
+
+/** The cost profile of one chain name, or the mid-range default for a chain the table does not name. */
+export function chainProfileFor(chain: string): ChainProfile {
+  for (const row of CHAIN_PROFILES) if (row.test.test(chain)) return row.profile;
+  return { perTxUsd: 0.5, fundUsd: 2, gasAsset: "the chain's native token", slowExit: false, family: 'evm' };
+}
+
+/** A USD figure the way the plans state it: cents under $10, one decimal under $100, whole dollars above. */
+function fmtUsd(n: number): string {
+  if (n < 10) return `$${n.toFixed(2).replace(/\.?0+$/, '')}`;
+  if (n < 100) return `$${Math.round(n * 10) / 10}`;
+  return `$${Math.round(n)}`;
+}
+
 /** The weekly repeat action for a category, in words a farmer can follow. */
 function weeklyFor(category: string | null): string {
   const c = (category ?? '').toLowerCase();
@@ -369,80 +440,174 @@ function weeklyFor(category: string | null): string {
   return 'repeat the core deposit action with a small amount so the week counts as active';
 }
 
-/** The core qualifying action for a protocol, from its category and working chain. */
-function actionFor(p: SnapshotProtocol, capital: number, chain: string, bitcoinOnly: boolean): string {
+/**
+ * One category's farm action, costed: the action itself, the weekly
+ * repeat, how many transactions each takes on the working chain, how
+ * long each takes, the fees that are not per-transaction gas (a bridge's
+ * percentage fee, an insurance premium, an exchange's trading fees) and
+ * how the position closes. v4 costed every plan with one flat gas tier;
+ * v5 counts transactions per action and prices them per chain.
+ */
+export interface ActionSpec {
+  action: string;
+  weekly: string;
+  setupTxs: number;
+  weeklyTxs: number;
+  /** Step 2's minutes, beyond step 1's wallet or account setup. */
+  setupMinutes: number;
+  /** The weekly action's minutes, beyond the 5-minute Sunday check. */
+  weeklyMinutes: number;
+  extraSetupFeeUsd: number;
+  extraWeeklyFeeUsd: number;
+  exitNote: string | null;
+}
+
+const UNSTAKING_NOTE = 'Unstaking is not instant on most staking products - withdrawals queue for days - so start the exit before the window ends, not after.';
+const SLOW_EXIT_NOTE = 'Withdrawing back to Ethereum through the canonical bridge waits out a fraud-proof window of about 7 days, so start the exit a week before the window ends.';
+
+/** The costed farm action for a protocol, from its category, working chain and chain family. */
+function actionSpecFor(p: SnapshotProtocol, capital: number, chain: string, bitcoinOnly: boolean, profile: ChainProfile): ActionSpec {
   const c = (p.category ?? '').toLowerCase();
   const n = p.name;
+  // An EVM deposit is approve-then-deposit (two transactions); a Solana action is one signature.
+  const depositTxs = profile.family === 'evm' ? 2 : 1;
+  const spec = (partial: Partial<ActionSpec> & { action: string }): ActionSpec => ({
+    weekly: weeklyFor(p.category),
+    setupTxs: depositTxs,
+    weeklyTxs: 1,
+    setupMinutes: 15,
+    weeklyMinutes: 10,
+    extraSetupFeeUsd: 0,
+    extraWeeklyFeeUsd: 0,
+    exitNote: null,
+    ...partial,
+  });
   if (bitcoinOnly) {
-    if (c.includes('bridge') || c.includes('canonical')) return `Send $${capital} of BTC from your Bitcoin wallet through ${n}'s deposit address and hold the bridged BTC it issues on the destination chain; the deposit is the activity the bridge records`;
-    if (c.includes('staking') || c.includes('restak')) return `Commit $${capital} of BTC from your Bitcoin wallet to ${n}'s staking product and leave the BTC in place for the full holding window`;
-    return `Move $${capital} of BTC from your Bitcoin wallet into ${n} on Bitcoin and keep the position there, untouched, for the holding window`;
+    if (c.includes('bridge') || c.includes('canonical')) return spec({ action: `Send $${capital} of BTC from your Bitcoin wallet through ${n}'s deposit address and hold the bridged BTC it issues on the destination chain; the deposit is the activity the bridge records`, setupTxs: 1, weeklyTxs: 1, setupMinutes: 15, weeklyMinutes: 10 });
+    if (c.includes('staking') || c.includes('restak')) return spec({ action: `Commit $${capital} of BTC from your Bitcoin wallet to ${n}'s staking product and leave the BTC in place for the full holding window`, setupTxs: 1, weeklyTxs: 0, setupMinutes: 15, weeklyMinutes: 0, weekly: 'check the staking position is still committed and screenshot the balance', exitNote: UNSTAKING_NOTE });
+    return spec({ action: `Move $${capital} of BTC from your Bitcoin wallet into ${n} on Bitcoin and keep the position there, untouched, for the holding window`, setupTxs: 1, weeklyTxs: 1, setupMinutes: 15, weeklyMinutes: 10 });
   }
-  if (c.includes('lend')) return `Supply $${capital} of USDC to ${n} on ${chain}, then borrow about 40% against it and supply the borrow back, so both sides of the market carry your activity`;
-  if (c.includes('cdp')) return `Deposit $${capital} of collateral into ${n} on ${chain} and mint a modest amount of its stablecoin against it, keeping the collateral ratio comfortably above liquidation`;
-  if (c.includes('dex')) return `Add $${capital} of two-sided liquidity to ${n}'s highest-TVL pool on ${chain} and make two small swaps through the same pool in the first week`;
-  if (c.includes('bridge')) return `Bridge $${capital} of USDC from ${chain} to the protocol's busiest destination chain through ${n}, then use the bridged funds in one app on the far side`;
-  if (c.includes('canonical')) return `Bridge $${capital} of ETH or USDC to ${chain} through ${n}'s canonical bridge and hold the bridged asset in the receiving wallet`;
-  if (c.includes('liquid staking')) return `Stake $${capital} of the chain's native asset through ${n} on ${chain} and hold the liquid staking receipt token in the same wallet`;
-  if (c.includes('restak')) return `Restake $${capital} of a liquid staking token through ${n} on ${chain} and keep the restaked position untouched while it accrues points`;
-  if (c.includes('staking')) return `Stake $${capital} of the chain's staking asset through ${n} on ${chain} and leave the position delegated for the full holding window`;
-  if (c.includes('derivative') || c.includes('perpetual')) return `Deposit $${capital} of USDC margin on ${n} (${chain}) and run one small hedged position a week, sized so liquidation is never close`;
-  if (c.includes('risk curator') || c.includes('curator') || c.includes('allocator')) return `Deposit $${capital} of USDC into a curated vault on ${n} (${chain}) and keep the vault shares; curated vaults are where allocator points usually accrue`;
-  if (c.includes('yield aggregator')) return `Deposit $${capital} of USDC into ${n}'s main auto-compounding vault on ${chain} and keep the vault shares for the whole window`;
-  if (c.includes('yield')) return `Deposit $${capital} of USDC into ${n}'s main yield vault on ${chain} and keep the position while the yield compounds`;
-  if (c.includes('rwa')) return `Mint $${capital} of ${n}'s tokenised real-world-asset product on ${chain} after its onboarding checks, and hold the asset to term`;
-  if (c.includes('cex')) return `Open an account on ${n}, complete its verification, deposit $${capital} and make a few spot trades a week on its main pairs; exchange points programmes reward steady volume`;
-  if (c.includes('basis')) return `Open ${n}'s basis position with $${capital} of USDC on ${chain}: the protocol pairs the spot and perpetual legs, so fund it and let the pair run`;
-  if (c.includes('stable')) return `Mint or deposit $${capital} of the stable asset through ${n} on ${chain} and hold it in the farming wallet`;
-  if (c.includes('insurance')) return `Buy $${capital} of protocol cover from ${n} on ${chain} and keep the policy active for the holding window`;
-  if (c.includes('prediction')) return `Fund $${capital} on ${n} and hold one position in its most liquid market on ${chain}`;
-  if (c.includes('privacy')) return `Deposit $${capital} into ${n}'s shielded pool on ${chain} and make one shielded transfer, following the protocol's own compliance guidance`;
-  if (c.includes('index')) return `Buy $${capital} of ${n}'s main index product on ${chain} and hold the index token in the farming wallet`;
-  return `Deposit $${capital} of USDC into ${n} on ${chain} through its main product page and keep the position open for the holding window`;
+  if (c.includes('lend')) return spec({ action: `Supply $${capital} of USDC to ${n} on ${chain}, then borrow about 40% against it and supply the borrow back, so both sides of the market carry your activity`, setupTxs: 3, weeklyTxs: 2, setupMinutes: 20, weeklyMinutes: 10, exitNote: 'Closing takes two more transactions at the end: repay the borrow in full, then withdraw the supply.' });
+  if (c.includes('cdp')) return spec({ action: `Deposit $${capital} of collateral into ${n} on ${chain} and mint a modest amount of its stablecoin against it, keeping the collateral ratio comfortably above liquidation`, setupTxs: 2, weeklyTxs: 1, setupMinutes: 15, weeklyMinutes: 5, exitNote: 'Closing takes two more transactions at the end: repay the minted stablecoin, then withdraw the collateral.' });
+  if (c.includes('dex')) return spec({ action: `Add $${capital} of two-sided liquidity to ${n}'s highest-TVL pool on ${chain} and make two small swaps through the same pool in the first week`, setupTxs: 3, weeklyTxs: 2, setupMinutes: 20, weeklyMinutes: 15, exitNote: 'Removing the liquidity at the end is one more transaction, and the two assets will have drifted from the ratio you deposited - that drift is impermanent loss, the real cost of LP farming.' });
+  if (c.includes('bridge')) return spec({ action: `Bridge $${capital} of USDC from ${chain} to the protocol's busiest destination chain through ${n}, then use the bridged funds in one app on the far side`, setupTxs: 2, weeklyTxs: 2, setupMinutes: 15, weeklyMinutes: 10, extraSetupFeeUsd: Math.max(1, Math.round(capital * 0.001)) });
+  if (c.includes('canonical')) return spec({ action: `Bridge $${capital} of ETH or USDC to ${chain} through ${n}'s canonical bridge and hold the bridged asset in the receiving wallet`, setupTxs: 1, weeklyTxs: 1, setupMinutes: 10, weeklyMinutes: 5, exitNote: profile.slowExit ? SLOW_EXIT_NOTE : null });
+  if (c.includes('liquid staking')) return spec({ action: `Stake $${capital} of the chain's native asset through ${n} on ${chain} and hold the liquid staking receipt token in the same wallet`, setupTxs: 1, weeklyTxs: 0, setupMinutes: 10, weeklyMinutes: 0, weekly: 'check the receipt token balance and its exchange rate against the native asset; the receipt accrues staking yield on its own', exitNote: UNSTAKING_NOTE });
+  if (c.includes('restak')) return spec({ action: `Restake $${capital} of a liquid staking token through ${n} on ${chain} and keep the restaked position untouched while it accrues points`, setupTxs: 2, weeklyTxs: 1, setupMinutes: 15, weeklyMinutes: 5, exitNote: UNSTAKING_NOTE });
+  if (c.includes('staking')) return spec({ action: `Stake $${capital} of the chain's staking asset through ${n} on ${chain} and leave the position delegated for the full holding window`, setupTxs: 1, weeklyTxs: 2, setupMinutes: 10, weeklyMinutes: 10, exitNote: UNSTAKING_NOTE });
+  if (c.includes('derivative') || c.includes('perpetual')) return spec({ action: `Deposit $${capital} of USDC margin on ${n} (${chain}) and run one small hedged position a week, sized so liquidation is never close`, setupTxs: 2, weeklyTxs: 2, setupMinutes: 15, weeklyMinutes: 15, exitNote: 'Close every position before withdrawing the margin: an open position at a snapshot is activity, a liquidated one is a loss.' });
+  if (c.includes('risk curator') || c.includes('curator') || c.includes('allocator')) return spec({ action: `Deposit $${capital} of USDC into a curated vault on ${n} (${chain}) and keep the vault shares; curated vaults are where allocator points usually accrue`, weeklyTxs: 1, setupMinutes: 15, weeklyMinutes: 5 });
+  if (c.includes('yield aggregator')) return spec({ action: `Deposit $${capital} of USDC into ${n}'s main auto-compounding vault on ${chain} and keep the vault shares for the whole window`, weeklyTxs: 2, setupMinutes: 15, weeklyMinutes: 10 });
+  if (c.includes('yield')) return spec({ action: `Deposit $${capital} of USDC into ${n}'s main yield vault on ${chain} and keep the position while the yield compounds`, weeklyTxs: 1, setupMinutes: 15, weeklyMinutes: 5 });
+  if (c.includes('rwa')) return spec({ action: `Mint $${capital} of ${n}'s tokenised real-world-asset product on ${chain} after its onboarding checks, and hold the asset to term`, setupTxs: 1, weeklyTxs: 0, setupMinutes: 30, weeklyMinutes: 0, weekly: 'check the position and any distribution or redemption notices' });
+  if (c.includes('cex')) return spec({ action: `Deposit $${capital} on ${n} and make a few spot trades a week on its main pairs; exchange points programmes reward steady volume`, setupTxs: 0, weeklyTxs: 0, setupMinutes: 10, weeklyMinutes: 10, extraWeeklyFeeUsd: 1, weekly: 'make two or three small spot trades on its main pairs' });
+  if (c.includes('basis')) return spec({ action: `Open ${n}'s basis position with $${capital} of USDC on ${chain}: the protocol pairs the spot and perpetual legs, so fund it and let the pair run`, setupTxs: 2, weeklyTxs: 1, setupMinutes: 15, weeklyMinutes: 10 });
+  if (c.includes('stable')) return spec({ action: `Mint or deposit $${capital} of the stable asset through ${n} on ${chain} and hold it in the farming wallet`, setupTxs: 2, weeklyTxs: 1, setupMinutes: 15, weeklyMinutes: 5 });
+  if (c.includes('insurance')) return spec({ action: `Buy $${capital} of protocol cover from ${n} on ${chain} and keep the policy active for the holding window`, setupTxs: 1, weeklyTxs: 0, setupMinutes: 10, weeklyMinutes: 0, extraSetupFeeUsd: Math.max(2, Math.round(capital * 0.02)), weekly: 'check the policy is still active and note its expiry date' });
+  if (c.includes('prediction')) return spec({ action: `Fund $${capital} on ${n} and hold one position in its most liquid market on ${chain}`, setupTxs: 1, weeklyTxs: 1, setupMinutes: 10, weeklyMinutes: 10 });
+  if (c.includes('privacy')) return spec({ action: `Deposit $${capital} into ${n}'s shielded pool on ${chain} and make one shielded transfer, following the protocol's own compliance guidance`, setupTxs: 2, weeklyTxs: 1, setupMinutes: 15, weeklyMinutes: 10 });
+  if (c.includes('index')) return spec({ action: `Buy $${capital} of ${n}'s main index product on ${chain} and hold the index token in the farming wallet`, weeklyTxs: 0, setupMinutes: 10, weeklyMinutes: 0, weekly: 'check the index token balance in the farming wallet' });
+  return spec({ action: `Deposit $${capital} of USDC into ${n} on ${chain} through its main product page and keep the position open for the holding window` });
+}
+
+/** A farm plan with every figure computed: the single source farmSteps renders and farmSummary totals. */
+export interface FarmPlan {
+  chain: string;
+  bitcoinOnly: boolean;
+  second: string | null;
+  isCex: boolean;
+  capital: number;
+  hold: number;
+  weeks: number;
+  profile: ChainProfile;
+  action: ActionSpec;
+  /** Step 1's minutes: 10 for a wallet, 30 for an exchange account with verification. */
+  setupStepMinutes: number;
+  /** Gas money to hold in the wallet: every planned transaction, plus two spare. */
+  gasBudgetUsd: number;
+  setupFeesUsd: number;
+  weeklyFeesUsd: number;
+  totalFeesUsd: number;
 }
 
 /**
- * A protocol's farm plan: five concrete steps derived from its own record -
- * its working chain, its category's action, its TVL tier's capital, its age's
- * holding window - each with a cost and a time. The plan says the protocol
- * records no token yet; it never claims the protocol has none.
+ * The plan for one protocol, from its own record: its working chain's
+ * cost profile, its category's transaction counts, its TVL tier's
+ * capital, its age's holding window. Change any input and every figure
+ * in the plan moves; no figure is typed per protocol.
  */
-export function farmSteps(p: SnapshotProtocol, age: number | null): string[] {
+export function buildPlan(p: SnapshotProtocol, age: number | null): FarmPlan {
   const { chain, bitcoinOnly } = workingChain(p);
   const second = p.chains.find((c) => c !== chain && c !== 'Bitcoin') ?? null;
   const capital = capitalFor(p);
   const hold = holdDaysFor(age);
-  const gas = capital >= 250 ? 10 : capital >= 150 ? 6 : 4;
-  const steps = [
-    bitcoinOnly
-      ? `Set up a fresh Bitcoin wallet for ${p.name}, fund it with about $${capital + 25} of BTC, and keep the seed phrase offline; ${p.name} records no token yet, so this wallet is your eligibility record. Cost: about $${gas} of network fees to fund. Time: 10 minutes.`
-      : `Set up a fresh wallet for ${p.name} on ${chain}, fund it with $${capital + 25} of USDC plus gas, and keep the seed phrase offline; ${p.name} records no token yet, so this wallet is your eligibility record. Cost: about $${gas} of gas to fund. Time: 10 minutes.`,
-    `${actionFor(p, capital, chain, bitcoinOnly)}. Cost: $${capital} of capital and about $${gas} of ${bitcoinOnly ? 'network fees' : 'gas'}. Time: 15-20 minutes to set up.`,
-    `Return once a week and ${weeklyFor(p.category)}; steady weekly activity over ${hold} days counts for more than one large deposit. Cost: about $2 of ${bitcoinOnly ? 'network fees' : 'gas'} a week. Time: 10 minutes a week.`,
-    `Hold the position for at least ${hold} days without withdrawing below the starting amount, so the activity spans several weekly snapshots. Cost: the $${capital} stays in the position. Time: ${hold} days.`,
-    `Every Sunday, check ${p.name}'s own points, rewards or governance page${second === null ? '' : ` (it also runs on ${second}; activity there counts from the same wallet)`} and screenshot your balance; claim only from a link the protocol itself publishes, and never pay a fee to claim. Cost: nothing to check. Time: 5 minutes a week.`,
-  ];
-  return steps.map((s) => (s.length > 600 ? `${s.slice(0, 596)}...` : s));
+  const weeks = Math.ceil(hold / 7);
+  const profile = chainProfileFor(chain);
+  const action = actionSpecFor(p, capital, chain, bitcoinOnly, profile);
+  const setupFeesUsd = action.setupTxs * profile.perTxUsd + action.extraSetupFeeUsd;
+  const weeklyFeesUsd = action.weeklyTxs * profile.perTxUsd + action.extraWeeklyFeeUsd;
+  const plannedTxs = action.setupTxs + action.weeklyTxs * weeks + 2;
+  return {
+    chain,
+    bitcoinOnly,
+    second,
+    isCex: (p.category ?? '').toLowerCase().includes('cex'),
+    capital,
+    hold,
+    weeks,
+    profile,
+    action,
+    setupStepMinutes: (p.category ?? '').toLowerCase().includes('cex') ? 30 : 10,
+    gasBudgetUsd: Math.max(2, Math.ceil(profile.perTxUsd * plannedTxs)),
+    setupFeesUsd,
+    weeklyFeesUsd,
+    totalFeesUsd: profile.fundUsd + setupFeesUsd + weeklyFeesUsd * weeks,
+  };
 }
 
 /**
- * The plan's totals, from the same figures farmSteps states: the capital
- * stays in the position; the fees are the funding gas, the setup gas and
- * $2 a week of repeat gas across the holding window (the Sunday check is
- * free); the time is 30 minutes to set up, then the 10-minute weekly
- * action plus the 5-minute check, every week of the window.
+ * A protocol's farm plan: five concrete steps rendered from buildPlan -
+ * each step states its own cost, computed from the working chain's
+ * per-transaction price and the action's transaction count, and its own
+ * time. The plan says the protocol records no token yet; it never
+ * claims the protocol has none.
+ */
+export function farmSteps(p: SnapshotProtocol, age: number | null): string[] {
+  const plan = buildPlan(p, age);
+  const { chain, bitcoinOnly, second, capital, hold, profile, action } = plan;
+  const txWord = (count: number): string => `${count} transaction${count === 1 ? '' : 's'}`;
+  const setup = bitcoinOnly
+    ? `Set up a fresh Bitcoin wallet for ${p.name}, fund it with about $${capital + 25} of BTC, and keep the seed phrase offline; ${p.name} records no token yet, so this wallet is your eligibility record. Cost: about ${fmtUsd(profile.fundUsd)} of network fees to fund. Time: 10 minutes.`
+    : plan.isCex
+      ? `Open an account on ${p.name} and complete its verification (a passport or driving licence and a selfie; approval can take a day), then deposit about $${capital + 25}; ${p.name} records no token yet, so this account is your eligibility record. Cost: about ${fmtUsd(profile.fundUsd)} of deposit network fees. Time: 30 minutes, plus the verification wait.`
+      : `Set up a fresh wallet for ${p.name} on ${chain}, fund it with $${capital + 25} of USDC plus about ${fmtUsd(plan.gasBudgetUsd)} of ${profile.gasAsset} for gas (about ${fmtUsd(profile.perTxUsd)} a transaction on ${chain}), and keep the seed phrase offline; ${p.name} records no token yet, so this wallet is your eligibility record. Cost: about ${fmtUsd(profile.fundUsd)} to bring the funds in. Time: 10 minutes.`;
+  const core = action.setupTxs > 0
+    ? `${action.action} - ${txWord(action.setupTxs)} on ${bitcoinOnly ? 'Bitcoin' : chain}. Cost: $${capital} of capital plus about ${fmtUsd(plan.setupFeesUsd)} of ${bitcoinOnly ? 'network fees' : 'fees'}. Time: about ${action.setupMinutes} minutes.`
+    : `${action.action}. Cost: $${capital} of capital; the exchange charges on trades, not on deposits. Time: about ${action.setupMinutes} minutes.`;
+  const weekly = plan.weeklyFeesUsd > 0
+    ? `Return once a week and ${action.weekly}; steady weekly activity over ${hold} days counts for more than one large deposit. Cost: about ${fmtUsd(plan.weeklyFeesUsd)} a week${action.weeklyTxs > 0 ? ` (${txWord(action.weeklyTxs)} at about ${fmtUsd(profile.perTxUsd)})` : ' of trading fees'}. Time: ${action.weeklyMinutes} minutes a week.`
+    : `Return once a week and ${action.weekly}; steady weekly activity over ${hold} days counts for more than one large deposit. Cost: nothing - the position accrues on its own. Time: ${action.weeklyMinutes} minutes a week.`;
+  const holdStep = `Hold the position for at least ${hold} days without withdrawing below the starting amount, so the activity spans several weekly snapshots.${action.exitNote === null ? '' : ` ${action.exitNote}`} Cost: the $${capital} stays in the position. Time: ${hold} days.`;
+  const check = `Every Sunday, check ${p.name}'s own points, rewards or governance page${second === null ? '' : ` (it also runs on ${second}; activity there counts from the same wallet)`} and screenshot your balance; claim only from a link the protocol itself publishes, and never pay a fee to claim. Cost: nothing to check. Time: 5 minutes a week.`;
+  return [setup, core, weekly, holdStep, check].map((s) => (s.length > 600 ? `${s.slice(0, 596)}...` : s));
+}
+
+/**
+ * The plan's totals, from the same buildPlan figures farmSteps states:
+ * the capital stays in the position; the fees are the funding cost, the
+ * setup transactions and extras, and the weekly transactions across
+ * every week of the holding window (the Sunday check is free); the time
+ * is step 1 plus the core action to set up, then the weekly action plus
+ * the 5-minute check, every week of the window.
  */
 export function farmSummary(p: SnapshotProtocol, age: number | null): FarmSummary {
-  const capital = capitalFor(p);
-  const hold = holdDaysFor(age);
-  const gas = capital >= 250 ? 10 : capital >= 150 ? 6 : 4;
-  const weeks = Math.ceil(hold / 7);
+  const plan = buildPlan(p, age);
   return {
-    capital_usd: capital,
-    fees_usd: gas * 2 + 2 * weeks,
-    setup_minutes: 30,
-    weekly_minutes: 15,
-    hold_days: hold,
+    capital_usd: plan.capital,
+    fees_usd: Math.max(1, Math.round(plan.totalFeesUsd)),
+    setup_minutes: plan.setupStepMinutes + plan.action.setupMinutes,
+    weekly_minutes: plan.action.weeklyMinutes + 5,
+    hold_days: plan.hold,
   };
 }
 
