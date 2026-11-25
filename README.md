@@ -13,7 +13,7 @@ reads the sealed DefiLlama snapshot (`/input/snapshot.json`), ranks **every**
 protocol that records no token (CoinGecko id and symbol both null) by an
 implied launch value, and writes a static dashboard a reader can use.
 
-## The value model (radar-4)
+## The value model (radar-5)
 
 Every figure is computed from the snapshot at run time; no protocol is
 hand-valued.
@@ -46,13 +46,28 @@ hand-valued.
 Each board row also carries a five-step farm plan generated from the
 protocol's own category, working chain, TVL tier and age — the action the
 category implies, a capital tier, a weekly cadence, a holding window, and
-claim hygiene. Every step states its cost and its time, and each row adds
-up the plan's totals (capital, fees across the holding window, minutes a
-week) in a `farm_summary` the dashboard shows as the plan at a glance. The working chain is the first listed chain that is not
-Bitcoin (DefiLlama lists Bitcoin first for many bridges and exchanges,
-and USDC cannot move on Bitcoin); a protocol listed only on Bitcoin gets
-steps phrased as holding or bridging BTC from a Bitcoin wallet instead.
-Plans say a protocol *records no token yet*; they never claim it has none.
+claim hygiene. Radar-5 costs every plan from two stated tables instead of
+one flat gas figure: a **per-chain cost table** (what one transaction
+costs on the working chain — about $4.50 on Ethereum, $0.08 on Base,
+$0.02 on Solana — what funding a fresh wallet there costs, and which
+asset the wallet holds for gas) and a **per-action transaction count**
+(a lending loop is supply + borrow + re-supply = 3 transactions, an EVM
+vault deposit is approve + deposit = 2, a Solana deposit is 1, an
+exchange account is 0 because it charges on trades instead). Fees that
+are not gas are counted too: a bridge's ~0.1% fee, an insurance
+premium of ~2% of cover, an exchange's ~$1 a week of trading fees. Each
+step states its own cost and time from those figures — including how
+the position closes (a lending loop needs repay-then-withdraw, an
+optimistic rollup's canonical bridge back to Ethereum waits out a
+~7-day fraud-proof window, staking withdrawals queue) — and each row
+adds up the plan's totals (capital, fees across the holding window,
+setup minutes, minutes a week) in a `farm_summary` the dashboard shows
+as the plan at a glance. The working chain is the first listed chain
+that is not Bitcoin (DefiLlama lists Bitcoin first for many bridges
+and exchanges, and USDC cannot move on Bitcoin); a protocol listed
+only on Bitcoin gets steps phrased as holding or bridging BTC from a
+Bitcoin wallet instead, priced at Bitcoin network fees. Plans say a
+protocol *records no token yet*; they never claim it has none.
 
 ## Run it
 

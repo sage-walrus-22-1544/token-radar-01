@@ -1,4 +1,4 @@
-// Token Radar entry (Node 22, standard library only), model radar-4.
+// Token Radar entry (Node 22, standard library only), model radar-5.
 //
 // Reads the sealed snapshot (default /input/snapshot.json; override with
 // --input <file|dir> or $MAKEFUN_INPUT), ranks every protocol that records
