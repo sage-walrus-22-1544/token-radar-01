@@ -10,10 +10,12 @@ the top 10, closes **2026-12-14 10:00 UTC**).
 
 A token launch radar for the make.fun `token-radar-01` bounty. The program
 reads the sealed DefiLlama snapshot (`/input/snapshot.json`), ranks **every**
-protocol that records no token (CoinGecko id and symbol both null) by an
-implied launch value, and writes a static dashboard a reader can use.
+protocol that records no token (CoinGecko id and symbol both null) **and
+whose value does not already trade by proxy** by an implied launch value,
+tracks the proxy products separately and unranked, and writes a static
+dashboard a reader can use.
 
-## The value model (radar-5)
+## The value model (radar-6)
 
 Every figure is computed from the snapshot at run time; no protocol is
 hand-valued.
@@ -35,18 +37,24 @@ hand-valued.
    `Restaked BTC` or `CEX`; a name ending in a version marker; a name
    carrying the whole word *wrapped*, *staked* or *staking*; or a name
    beginning with an exchange's name (Binance, Coinbase, Bybit, Kraken,
-   Bitget, OKX, Bitfinex, Gemini). Such a protocol stays on the board —
-   it is coverage, and the dashboard badges it TRADES BY PROXY — but its
-   implied value is multiplied by **0.04** and its model breakdown
-   states the factor and the reason (e.g. *wrapped product: value trades
-   via parent token*). Every other protocol keeps a factor of 1.
+   Bitget, OKX, Bitfinex, Gemini). Such a protocol is **not ranked**:
+   radar-6 moves it out of the board into a separate, unranked section
+   of the dashboard — badged TRADES BY PROXY, with the reason (e.g.
+   *wrapped product: value trades via parent token*) and its farm plan —
+   and its implied value is still computed with the **0.04** factor as a
+   reference. Every other protocol keeps a factor of 1 and stays in the
+   ranking.
 5. **Ranking** — by implied value, then TVL, then slug; ties are nudged
-   down $1 at a time so values strictly follow rank order.
+   down $1 at a time so values strictly follow rank order. The nudge
+   runs over the full records-no-token set first, and the ranked board
+   is the genuine rows of that order — 198 of this snapshot's 342 — so
+   every ranked row keeps exactly the value radar-5 gave it.
 
-Each board row also carries a five-step farm plan generated from the
+Each board row — and each row of the unranked proxy section — also
+carries a five-step farm plan generated from the
 protocol's own category, working chain, TVL tier and age — the action the
 category implies, a capital tier, a weekly cadence, a holding window, and
-claim hygiene. Radar-5 costs every plan from two stated tables instead of
+claim hygiene. Radar-6 keeps radar-5's plans, which cost every plan from two stated tables instead of
 one flat gas figure: a **per-chain cost table** (what one transaction
 costs on the working chain — about $4.50 on Ethereum, $0.08 on Base,
 $0.02 on Solana — what funding a fresh wallet there costs, and which
@@ -88,8 +96,10 @@ output directory. Runs are deterministic: same snapshot, same bytes.
 - `main.ts` — the entrypoint: snapshot in, board + dashboard + dossier out.
 - `lib/model.ts` — the value model, the board builder and the farm plans.
 - `dashboard/` — the static page (no network): methodology, the sortable /
-  filterable board, an early-radar momentum section, a per-protocol detail
-  view, and the live-token peer set kept apart from the ranking.
+  filterable board, an unranked already-trading-by-proxy section with each
+  protocol's reason and farm plan, an early-radar momentum section, a
+  per-protocol detail view, and the live-token peer set kept apart from
+  the ranking.
 - `screenshots/` — screenshots of the dashboard (board, detail, filtered).
 - `vendor/makefun-board.ts` — make.fun's dossier library, unmodified.
 

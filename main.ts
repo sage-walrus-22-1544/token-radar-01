@@ -1,8 +1,10 @@
-// Token Radar entry (Node 22, standard library only), model radar-5.
+// Token Radar entry (Node 22, standard library only), model radar-6.
 //
 // Reads the sealed snapshot (default /input/snapshot.json; override with
-// --input <file|dir> or $MAKEFUN_INPUT), ranks every protocol that records
-// no token with the model in lib/model.ts, writes /output/board.json and
+// --input <file|dir> or $MAKEFUN_INPUT), ranks every genuine protocol
+// that records no token with the model in lib/model.ts (protocols whose
+// value already trades by proxy are carried unranked in data.js, not in
+// board.json), writes /output/board.json and
 // /output/data.js, copies dashboard/ and screenshots/ into the output, and
 // writes /output/dossier.json with buildDossier from vendor/makefun-board.ts
 // (the kit's library, byte for byte).
