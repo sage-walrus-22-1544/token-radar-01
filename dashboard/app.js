@@ -1,4 +1,4 @@
-// Token Radar dashboard (model radar-5). Reads window.RADAR, written beside
+// Token Radar dashboard (model radar-6). Reads window.RADAR, written beside
 // dashboard/ by main.ts from the same board board.json carries - the farm
 // plans shown here are the board's own farm_steps, not a second derivation.
 // No network: every byte it renders is in data.js.
@@ -80,6 +80,8 @@
         el('p', null, 'The board ranks ', el('b', { text: DATA.board_size + ' protocols' }),
           ' that record no token in the snapshot - all ', el('b', { text: DATA.watchlist_size + ' watchlist protocols' }),
           ' at or above ' + fmtUsd(DATA.floor_usd) + ' TVL, plus ' + DATA.early_size + ' earlier ones below that floor. ',
+          'A further ', el('b', { text: DATA.proxy_size + ' protocols' }),
+          ' record no token either, but their value already trades by proxy through a parent token or business; they are not ranked and sit in their own section below. ',
           'A protocol records no token yet is not proof it has none: DefiLlama\'s record is what the radar reads. ',
           'Implied values are this model\'s estimates, not prices and not predictions that a token will be issued.')),
       el('div', { class: 'stats' },
@@ -99,7 +101,7 @@
       el('h2', { text: 'The value model, stated plainly' }),
       el('p', { text: DATA.model_summary }),
       el('div', { class: 'formula', text: 'implied = round( TVL x category multiple x momentum x maturity x breadth x plausibility )' }),
-      el('p', { text: 'Rows badged TRADES BY PROXY are the plausibility step made visible: bridges, staking products, exchanges, versioned re-releases and wrapped, staked or exchange-branded products. Their value already trades through a parent token or business, so the model counts only 4% of their raw implied value - they stay on the board for coverage, and the detail view states each one\'s reason.' }),
+      el('p', { text: 'The plausibility step is the separation below the board: bridges, staking products, exchanges, versioned re-releases and wrapped, staked or exchange-branded products already trade through a parent token or business, so radar-6 does not rank them. They sit in their own section - Already trading by proxy - each with its reason and its farm plan, and the 4% plausibility factor still prices the reference value shown there. What they no longer do is take ranked places from protocols still waiting on a launch of their own.' }),
       el('p', { text: 'Category multiples measured from this snapshot\'s ' + DATA.peers.tokenized_peers + ' tokenized protocols (global median x' + DATA.peers.global_ratio.toFixed(3) + '):' }),
       el('div', { class: 'peers' }, chips));
   }
@@ -187,6 +189,33 @@
           el('span', { class: 'row' }, el('span', { text: 'Board rank' }), el('span', { text: '#' + r.rank })));
       })));
   }
+  function proxySection() {
+    if (!DATA.proxy || !DATA.proxy.length) return null;
+    var tbody = el('tbody');
+    DATA.proxy.forEach(function (r) {
+      tbody.appendChild(el('tr', {
+        'data-selected': state.selected === r.slug ? 'true' : 'false', tabindex: '0',
+        onclick: function () { openDetail(r.slug); },
+        onkeydown: function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(r.slug); } }
+      },
+        el('td', null, el('div', { class: 'name' },
+          el('b', null, r.name, el('span', { class: 'badge proxy', text: 'TRADES BY PROXY' })),
+          el('span', { class: 'sub', text: (r.category || 'Uncategorised') + ' on ' + (r.chains && r.chains.length ? r.chains.slice(0, 3).join(', ') : 'an unnamed chain') }))),
+        el('td', { class: 'num', text: fmtUsd(r.tvl_usd) }),
+        el('td', { class: 'num', text: fmtUsd(r.implied_value_usd) }),
+        el('td', null, el('span', { class: 'sub', text: r.plausibility_reason || '' }))));
+    });
+    return el('section', { class: 'proxy-sec' },
+      el('h2', { text: 'Already trading by proxy: tracked, not ranked' }),
+      el('p', { class: 'sub', text: 'These ' + DATA.proxy.length + ' protocols record no token of their own, but their value already trades through a parent token or business, so they take no place in the ranking above. Each keeps the reason the model sets it apart and its farm plan - select a row to read both. The value shown is the model value at the 0.04 launch-plausibility factor: a reference, not a rank.' }),
+      el('div', { class: 'panel' }, el('div', { class: 'table-wrap' },
+        el('table', null,
+          el('caption', { class: 'sub', text: 'Protocols whose value already trades by proxy, unranked, in model-value order.' }),
+          el('thead', null, el('tr', null,
+            el('th', { scope: 'col', text: 'Protocol' }), el('th', { scope: 'col', text: 'TVL' }),
+            el('th', { scope: 'col', text: 'Reference value' }), el('th', { scope: 'col', text: 'Why it is set apart' }))),
+          tbody))));
+  }
   function liveSection() {
     var tbody = el('tbody');
     DATA.live.forEach(function (r) {
@@ -219,12 +248,13 @@
   dialog.addEventListener('close', function () { state.selected = null; });
   function openDetail(slug) {
     var row = DATA.rows.filter(function (r) { return r.slug === slug; })[0];
+    if (!row && DATA.proxy) row = DATA.proxy.filter(function (r) { return r.slug === slug; })[0];
     if (!row) return;
     state.selected = slug;
     dialog.textContent = '';
     dialog.appendChild(el('div', { class: 'detail-head' },
       el('div', null,
-        el('span', { class: 'brand-name', text: 'Rank ' + row.rank + ' of ' + DATA.board_size + (row.watchlist ? ' - watchlist' : '') + (row.plausibility_reason ? ' - trades by proxy' : '') }),
+        el('span', { class: 'brand-name', text: (row.rank > 0 ? 'Rank ' + row.rank + ' of ' + DATA.board_size : 'Trades by proxy - not ranked') + (row.watchlist ? ' - watchlist' : '') }),
         el('h2', { id: 'detail-title', text: row.name }),
         el('p', { class: 'sub', text: (row.category || 'Uncategorised') + ' on ' + (row.chains && row.chains.length ? row.chains.join(', ') : 'an unnamed chain') + ' - records no token in the snapshot' })),
       el('button', { class: 'close', type: 'button', 'aria-label': 'Close details', text: 'Close', onclick: function () { dialog.close(); } })));
@@ -242,7 +272,7 @@
         line('Breadth multiplier', 'x' + row.breadth_multiplier.toFixed(4)),
         line('Launch plausibility', 'x' + row.plausibility_factor.toFixed(2)),
         el('div', { class: 'total' }, el('span', { text: 'Implied value' }), el('b', { text: fmtUsd(row.implied_value_usd) }))),
-      row.plausibility_reason ? el('p', { class: 'sub', text: 'Why the plausibility factor applies: ' + row.plausibility_reason + '. The protocol stays on the board for coverage; the factor keeps a product whose value already trades from outranking protocols still waiting on a launch of their own.' }) : null,
+      row.plausibility_reason ? el('p', { class: 'sub', text: 'Why this protocol is not ranked: ' + row.plausibility_reason + '. Its value already trades through a parent token or business, so radar-6 tracks it in the unranked proxy section instead of the board; the implied value above carries the model\'s 0.04 launch-plausibility factor as a reference.' }) : null,
       el('p', { class: 'sub', text: 'Model ' + DATA.model_version + ': the same function scores every protocol on the board; no name is special-cased. An estimate, not a price.' })));
     var fs = row.farm_summary;
     dialog.appendChild(el('section', { class: 'detail-section' },
@@ -266,6 +296,8 @@
     shell.appendChild(method());
     shell.appendChild(controls());
     shell.appendChild(boardTable());
+    var proxySec = proxySection();
+    if (proxySec) shell.appendChild(proxySec);
     var early = earlySection();
     if (early) shell.appendChild(early);
     shell.appendChild(liveSection());

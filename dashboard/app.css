@@ -86,6 +86,10 @@ tbody tr[data-selected="true"] { background: rgba(47,191,143,.09); }
 .early { margin-top: 22px; }
 .early h2 { margin-bottom: 4px; }
 .early .sub { margin-bottom: 12px; }
+
+.proxy-sec { margin-top: 22px; }
+.proxy-sec h2 { margin-bottom: 4px; }
+.proxy-sec .sub { margin-bottom: 12px; }
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 13px 14px; display: grid; gap: 5px; cursor: pointer; text-align: left; width: 100%; }
 .card:hover { border-color: var(--accent); }
