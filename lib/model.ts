@@ -1,14 +1,22 @@
-// Token Radar model v5: one sealed snapshot in, one ranked board out.
-// (v5 keeps v4's values and ranking exactly, and rebuilds the farm plans
-// around a per-chain cost table and per-action transaction counts, so a
-// plan's fees and times are arithmetic on the chain it runs on and the
-// action it takes - not one flat gas figure quoted for every protocol.)
+// Token Radar model v6: one sealed snapshot in, one ranked board out.
+// (v6 keeps v5's values for every protocol exactly - the same multiples,
+// adjustments, plausibility factor and tie-nudge, computed over the full
+// records-no-token set - and changes only who is ranked: a protocol whose
+// value already trades by proxy leaves the ranking and is tracked in a
+// separate unranked list, so the board ranks only protocols whose value
+// does not yet trade anywhere. v5 kept v4's values and ranking exactly,
+// and rebuilt the farm plans around a per-chain cost table and per-action
+// transaction counts, so a plan's fees and times are arithmetic on the
+// chain it runs on and the action it takes - not one flat gas figure
+// quoted for every protocol.)
 //
-// The board ranks EVERY protocol in the snapshot that records no token
-// (gecko_id and symbol both null) - the watchlist's 40 large protocols and
-// the few hundred smaller ones below its $50M floor alike. Protocols whose
-// token already trades are never ranked; they are the model's teachers and
-// the dashboard's live comparison set.
+// The board ranks every GENUINE protocol in the snapshot that records no
+// token (gecko_id and symbol both null) - the watchlist's 40 large
+// protocols and the smaller ones below its $50M floor alike. Protocols
+// whose token already trades are never ranked; they are the model's
+// teachers and the dashboard's live comparison set. Protocols that record
+// no token but whose value already trades by proxy are not ranked either;
+// they are carried separately, with the reason and a farm plan.
 //
 // Implied value is derived from the snapshot itself, in four stated steps:
 //
@@ -35,13 +43,19 @@
 //      or CEX; a name ending in a version marker; a name carrying the
 //      whole word wrapped, staked or staking; or a name beginning with
 //      an exchange's name (Binance, Coinbase, Bybit, Kraken, Bitget,
-//      OKX, Bitfinex, Gemini). Such a protocol stays on the board - it
-//      is coverage, and a reader should see it - but its implied value
-//      is multiplied by PLAUSIBILITY_FACTOR (0.04) and its row states
-//      the reason. Everything else keeps a factor of 1.
-//   5. Ranking. Rows sort by implied value, then TVL, then slug; a final
-//      pass nudges any tied value down by $1 steps so values never rise
-//      as rank ascends and the ordering is strict and deterministic.
+//      OKX, Bitfinex, Gemini). Such a protocol's implied value is
+//      multiplied by PLAUSIBILITY_FACTOR (0.04) and its row states the
+//      reason - and in v6 it is not ranked at all: it moves to a
+//      separate unranked list the dashboard shows as its own section,
+//      reason and farm plan intact. Everything else keeps a factor of 1
+//      and stays in the ranking.
+//   5. Ranking. All records-no-token rows sort by implied value, then
+//      TVL, then slug; a final pass over the full set nudges any tied
+//      value down by $1 steps so values never rise as rank ascends and
+//      the ordering is strict and deterministic. The ranked board is
+//      then the genuine rows of that order, re-ranked 1..N; because the
+//      nudge ran over the full set first, every genuine row keeps
+//      exactly the value v5 gave it.
 //
 // No protocol name is ever special-cased and no number is hand-typed per
 // protocol: change the snapshot and every figure moves.
@@ -69,7 +83,7 @@ export interface Snapshot {
   watchlist: string[];
 }
 
-export const MODEL_VERSION = 'radar-5';
+export const MODEL_VERSION = 'radar-6';
 
 /** Categories need at least this many tokenized peers before their own median is trusted. */
 export const MIN_PEERS = 3;
@@ -122,7 +136,7 @@ export interface FarmSummary {
   hold_days: number;
 }
 
-/** One row of board.json. */
+/** One row of board.json. A proxy row carried outside the board has rank 0: unranked. */
 export interface BoardRow {
   rank: number;
   slug: string;
@@ -201,12 +215,15 @@ export interface RadarData {
   board_size: number;
   early_size: number;
   live_size: number;
+  proxy_size: number;
   total_implied_usd: number;
   total_tvl_usd: number;
   peers: PeerStats;
   rows: RadarRow[];
   early: RadarRow[];
   live: LiveRow[];
+  /** The proxy products, unranked (rank 0), in the full set's value order, reason and farm plan intact. */
+  proxy: RadarRow[];
 }
 
 /** Why the snapshot is not one this model can score. */
@@ -248,8 +265,9 @@ export function recordsNoToken(p: SnapshotProtocol): boolean {
  * a parent token or business? The tests are the watchlist rule's own
  * exclusions, reused from the kit's input/README.md - no name is
  * special-cased beyond the rule the house itself published. A proxy
- * product keeps its board row but is valued at PLAUSIBILITY_FACTOR of
- * its model value, and the row carries the reason in plain words.
+ * product is valued at PLAUSIBILITY_FACTOR of its model value and the
+ * row carries the reason in plain words - and since v6 it is not
+ * ranked: buildBoard carries it in a separate unranked list.
  */
 export function plausibility(p: SnapshotProtocol): { factor: number; reason: string | null } {
   const category = p.category ?? '';
@@ -613,8 +631,14 @@ export function farmSummary(p: SnapshotProtocol, age: number | null): FarmSummar
 
 // ---------------------------------------------------------------- the board
 
-/** The ranked board: every protocol that records no token, strongest implied value first. */
-export function buildBoard(snapshot: Snapshot): { board: BoardRow[]; peers: PeerStats } {
+/**
+ * The ranked board and the unranked proxy list. Every protocol that
+ * records no token is scored, sorted and tie-nudged exactly as v5 did;
+ * the board is then the genuine rows of that order, re-ranked 1..N, and
+ * the proxy rows are carried apart with rank 0, in the same order, their
+ * values, reasons and farm plans untouched.
+ */
+export function buildBoard(snapshot: Snapshot): { board: BoardRow[]; proxies: BoardRow[]; peers: PeerStats } {
   const peers = peerStats(snapshot);
   const watch = new Set(snapshot.watchlist);
   const scored = snapshot.protocols
@@ -625,7 +649,7 @@ export function buildBoard(snapshot: Snapshot): { board: BoardRow[]; peers: Peer
   for (let i = 1; i < scored.length; i++) {
     if (scored[i]!.v.implied >= scored[i - 1]!.v.implied) scored[i]!.v.implied = Math.max(1, scored[i - 1]!.v.implied - 1);
   }
-  const board = scored.map((s, i) => ({
+  const all = scored.map((s, i) => ({
     rank: i + 1,
     slug: s.p.slug,
     name: s.p.name,
@@ -654,7 +678,13 @@ export function buildBoard(snapshot: Snapshot): { board: BoardRow[]; peers: Peer
     farm_steps: farmSteps(s.p, s.v.age),
     farm_summary: farmSummary(s.p, s.v.age),
   }));
-  return { board, peers };
+  const board: BoardRow[] = [];
+  const proxies: BoardRow[] = [];
+  for (const row of all) {
+    if (row.model.plausibility_factor === 1) board.push({ ...row, rank: board.length + 1 });
+    else proxies.push({ ...row, rank: 0 });
+  }
+  return { board, proxies, peers };
 }
 
 /** The live-token comparison set: the largest tokenized protocols by market cap, never ranked. */
@@ -682,15 +712,16 @@ const MODEL_SUMMARY =
   'chain breadth (+3% per extra chain, up to +21%). One more step keeps the board honest: a protocol whose value ' +
   'already trades by proxy - a bridge or staking product of another token, an exchange, a versioned re-release, or a ' +
   'wrapped, staked or exchange-branded product, the same classes the watchlist rule leaves out - is not a launch ' +
-  'waiting to happen, so its implied value is multiplied by a launch-plausibility factor of 0.04 and its row says ' +
-  'why. It stays on the board; it just stops outranking genuine pre-token protocols. Every figure is computed ' +
+  'waiting to happen. Its implied value still carries a launch-plausibility factor of 0.04 as a reference, and its ' +
+  'row says why - but it is not ranked: it is tracked in a separate, unranked section of the dashboard, so the ' +
+  'ranking holds only protocols whose value does not yet trade anywhere. Every figure is computed ' +
   'from the snapshot at run time.';
 
 /** Everything the dashboard renders, from the snapshot. */
 export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: RadarData } {
-  const { board, peers } = buildBoard(snapshot);
+  const { board, proxies, peers } = buildBoard(snapshot);
   const live = liveRows(snapshot);
-  const rows: RadarRow[] = board.map((r) => ({
+  const compact = (r: BoardRow): RadarRow => ({
     rank: r.rank,
     slug: r.slug,
     name: r.name,
@@ -711,7 +742,9 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
     plausibility_reason: r.model.plausibility_reason,
     farm_steps: r.farm_steps,
     farm_summary: r.farm_summary,
-  }));
+  });
+  const rows: RadarRow[] = board.map(compact);
+  const proxy: RadarRow[] = proxies.map(compact);
   // The early radar: below the watchlist floor, ranked by 7-day momentum then TVL.
   const early = rows
     .filter((r) => r.tvl_usd < snapshot.floor_usd && r.change_7d !== null && r.change_7d > 0)
@@ -728,12 +761,14 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
     board_size: board.length,
     early_size: board.filter((r) => !r.watchlist).length,
     live_size: live.length,
+    proxy_size: proxies.length,
     total_implied_usd: board.reduce((n, r) => n + r.implied_value_usd, 0),
     total_tvl_usd: board.reduce((n, r) => n + r.tvl_usd, 0),
     peers,
     rows,
     early,
     live,
+    proxy,
   };
   return { board, radar };
 }
